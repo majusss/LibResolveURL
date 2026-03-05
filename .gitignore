@@ -133,3 +133,5 @@ dmypy.json
 
 # Mac Spotlight
 *.DS_Store
+
+.idea/
