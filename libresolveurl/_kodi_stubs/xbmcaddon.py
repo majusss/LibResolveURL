@@ -11,6 +11,7 @@ before any stubs are imported).
 import json
 import logging
 import os
+import re
 import threading
 
 _logger = logging.getLogger("libresolveurl")
@@ -25,6 +26,51 @@ _CONFIG_DIR: str = os.environ.get(
 _SETTINGS_FILE: str = os.path.join(_CONFIG_DIR, "settings.json")
 _settings: dict = {}
 _lock = threading.Lock()
+
+# Lazily-built cache of default values parsed from each resolver's settings XML.
+# None means "not yet built"; {} means "built but empty".
+_xml_defaults: "dict | None" = None
+
+
+def _build_xml_defaults() -> "dict | None":
+    """Parse default values from every resolver's get_settings_xml() output.
+
+    Each XML snippet looks like::
+
+        '<setting id="ByseResolver_enabled" type="bool" … default="true"/>'
+
+    We extract id → default pairs for all registered resolver classes.
+    This is called lazily on first getSetting() miss so that all resolver
+    subclasses are already loaded by the time we iterate them.
+
+    Returns None if resolveurl modules aren't fully loaded yet (circular
+    import during package init) — caller retries on the next call.
+    """
+    try:
+        from resolveurl.resolver import ResolveUrl
+        from resolveurl.plugins.__resolve_generic__ import ResolveGeneric
+    except Exception:
+        # resolveurl is still being imported (circular); retry later
+        return None
+
+    defaults: dict = {}
+    id_re = re.compile(r'\bid="([^"]+)"')
+    default_re = re.compile(r'\bdefault="([^"]*)"')
+    classes = (
+        ResolveUrl.__class__.__subclasses__(ResolveUrl)
+        + ResolveUrl.__class__.__subclasses__(ResolveGeneric)
+    )
+    for cls in classes:
+        try:
+            for fragment in cls.get_settings_xml():
+                id_m = id_re.search(fragment)
+                def_m = default_re.search(fragment)
+                if id_m and def_m:
+                    defaults[id_m.group(1)] = def_m.group(1)
+        except Exception:
+            pass
+    _logger.debug("kodi mockup: loaded %d default settings from resolver XML", len(defaults))
+    return defaults
 
 
 def _load() -> None:
@@ -76,8 +122,26 @@ class Addon:
     # ------------------------------------------------------------------
 
     def getSetting(self, key: str) -> str:
+        global _xml_defaults
         with _lock:
-            return str(_settings.get(key, ""))
+            if key in _settings:
+                value = str(_settings[key])
+                _logger.debug("kodi mockup get settings: key=%r value=%r (from file)", key, value)
+                return value
+            # Build the defaults cache on first miss (lazy — all resolver
+            # subclasses must be imported before we can iterate them).
+            # _build_xml_defaults() returns None during circular import (package
+            # init phase); we leave _xml_defaults as None and retry next call.
+            if _xml_defaults is None:
+                built = _build_xml_defaults()
+                if built is not None:
+                    _xml_defaults = built
+            if _xml_defaults and key in _xml_defaults:
+                value = _xml_defaults[key]
+                _logger.debug("kodi mockup get settings: key=%r value=%r (xml default)", key, value)
+                return value
+            _logger.debug("kodi mockup get settings: key=%r value='' (missing)", key)
+            return ""
 
     def setSetting(self, key: str, value: str) -> None:
         with _lock:
