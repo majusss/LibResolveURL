@@ -72,8 +72,10 @@ _STUBS = os.path.join(_HERE, "_kodi_stubs")
 _DEFAULT_CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".config", "libresolveurl")
 
 # Set env vars BEFORE the stubs are imported — stubs read them at module level.
-os.environ.setdefault("LIBRESOLVEURL_CONFIG_DIR", _DEFAULT_CONFIG_DIR)
-os.environ.setdefault("LIBRESOLVEURL_ADDON_PATH", _DEFAULT_CONFIG_DIR)
+if not os.environ.get("LIBRESOLVEURL_CONFIG_DIR"):
+    os.environ.setdefault("LIBRESOLVEURL_CONFIG_DIR", _DEFAULT_CONFIG_DIR)
+if not os.environ.get("LIBRESOLVEURL_ADDON_PATH"):
+    os.environ.setdefault("LIBRESOLVEURL_ADDON_PATH", _DEFAULT_CONFIG_DIR)
 
 # Evict any pre-installed kodi-six or real Kodi modules from sys.modules so
 # our stubs take precedence unconditionally.
