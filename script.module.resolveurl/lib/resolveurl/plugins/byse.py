@@ -24,6 +24,89 @@ from resolveurl.lib import helpers
 from resolveurl.resolver import ResolveUrl, ResolverError
 
 
+def _byse_re(t, e):
+    return ((t << e) | (t >> (32 - e))) & 0xFFFFFFFF
+
+
+def _byse_ye(e):
+    m = 0xFFFFFFFF
+    e[0] = (e[0] + e[1]) & m
+    e[3] = _byse_re(e[3] ^ e[0], 16)
+    e[2] = (e[2] + e[3]) & m
+    e[1] = _byse_re(e[1] ^ e[2], 12)
+    e[0] = (e[0] + e[1]) & m
+    e[3] = _byse_re(e[3] ^ e[0], 8)
+    e[2] = (e[2] + e[3]) & m
+    e[1] = _byse_re(e[1] ^ e[2], 7)
+
+
+def _byse_gr(t):
+    m = 0xFFFFFFFF
+    e = [1779033703, 3144134277, 1013904242, 2773480762]
+    be, lt, dr, lr, hr = 512, 511, 2, 2654435761, 2246822519
+    _re = _byse_re
+    _ye = _byse_ye
+    for i in t:
+        e[0] = (e[0] + i) & m
+        e[0] = _re(e[0], 7)
+        _ye(e)
+    for _ in range(8):
+        _ye(e)
+    r = [0] * be
+    for i in range(be):
+        _ye(e)
+        r[i] = (e[0] ^ e[2]) & m
+    for _ in range(dr):
+        for s in range(be):
+            a = r[s] & lt
+            c = (r[s] + r[a]) & m
+            c = _re(c, 13)
+            c = (c ^ ((r[(s + 1) & lt] * lr) & m)) & m
+            r[s] = c
+            e[0] = (e[0] ^ c) & m
+            _ye(e)
+    n = [0] * 8
+    o = be // 8
+    for i in range(8):
+        _ye(e)
+        s = e[0]
+        a = i * o
+        for c in range(o):
+            d = r[a + c]
+            s = (s + d) & m
+            s = _re(s, 5)
+            s = (s ^ ((d * hr) & m)) & m
+        n[i] = (s ^ e[2]) & m
+    return n
+
+
+def _byse_wr(t):
+    e = 0
+    for n in t:
+        if n == 0:
+            e += 32
+            continue
+        return e + (32 - n.bit_length())
+    return e
+
+
+def _byse_pow_worker(args):
+    nonce, difficulty, start, step = args
+    prefix = nonce + ':'
+    encode = str.encode
+    s = start
+    # Upper bound to avoid infinite loops if parent fails to terminate us.
+    # difficulty 12 needs ~4k hashes on average; 5M is far beyond any
+    # realistic need while keeping workers finite.
+    limit = start + step * 2000000
+    while s < limit:
+        d = _byse_gr(encode(prefix + str(s), 'ascii'))
+        if _byse_wr(d) >= difficulty:
+            return str(s)
+        s += step
+    return None
+
+
 class ByseResolver(ResolveUrl):
     name = 'Byse'
     domains = [
@@ -95,13 +178,15 @@ class ByseResolver(ResolveUrl):
 
             captcha_url = '{0}api/videos/{1}/{2}captcha'.format(ref, media_id, embed)
             captcha = self.net.http_POST(captcha_url, headers=headers, form_data={'fingerprint': fingerprint}, jdata=True, timeout=40).json
-            solution = self.er(captcha['pow_nonce'], captcha['pow_difficulty'])
+            solution = self.er(captcha['pow_nonce'], captcha['pow_difficulty'], algorithm=captcha.get('algorithm'))
             if solution is None:
                 raise ResolverError('Unable to solve captcha')
 
             verify_url = '{0}api/videos/{1}/{2}captcha/verify'.format(ref, media_id, embed)
             post_data = {'pow_token': captcha['pow_token'], 'solution': solution, 'fingerprint': fingerprint}
             verify = self.net.http_POST(verify_url, headers=headers, form_data=post_data, jdata=True, timeout=40).json
+            if not verify.get('token'):
+                raise ResolverError('Captcha verification failed: {0}'.format(verify.get('reason', 'pow_failed')))
             headers.update({'X-Captcha-Token': verify.get('token')})
 
             playback_url = '{0}api/videos/{1}/{2}playback'.format(ref, media_id, embed)
@@ -308,17 +393,111 @@ class ByseResolver(ResolveUrl):
             return e + (32 - n.bit_length())
         return e
 
-    def er(self, t, e, r=20.0):
+    def er(self, t, e, r=45.0, algorithm=None):
         import time
+        try:
+            e = int(e)
+        except (TypeError, ValueError):
+            return None
         if e <= 0:
             return '0'
+        # NOTE: server currently sends algorithm="sha256-leading-zero-bits"
+        # but still requires the legacy custom PoW (verified: legacy solution
+        # is accepted, SHA256 is rejected). Keep er_sha256() for future use,
+        # but always solve with the legacy PoW for now.
+        _ = algorithm
+        # Parallel legacy solver first (uses all cores), fallback to single.
+        sol = self._er_mp(t, e, r)
+        if sol is not None:
+            return sol
+        return self._er_single(t, e, r)
+
+    def _er_single(self, t, e, r=45.0):
+        import time
         start = time.time()
         s = 0
         t += ':'
         while True:
             for _ in range(1024):
-                d = self.gr((t + str(s)).encode('ascii'))
-                if self.wr(d) >= e:
+                d = _byse_gr((t + str(s)).encode('ascii'))
+                if _byse_wr(d) >= e:
+                    return str(s)
+                s += 1
+            if time.time() - start > r:
+                return None
+
+    def _er_mp(self, t, e, r=45.0):
+        import time
+        try:
+            import multiprocessing as mp
+            import os
+        except ImportError:
+            return None
+        try:
+            cpu = os.cpu_count() or 4
+        except NotImplementedError:
+            cpu = 4
+        workers = max(2, min(8, cpu))
+        # Tiny difficulties solve in ms single-threaded; skip MP startup cost.
+        if e < 10:
+            return None
+        try:
+            pool = mp.Pool(workers)
+        except Exception:
+            return None
+        try:
+            tasks = [(t, e, i, workers) for i in range(workers)]
+            asyncs = [pool.apply_async(_byse_pow_worker, (task,)) for task in tasks]
+            start = time.time()
+            while time.time() - start < r:
+                for a in asyncs:
+                    if a.ready():
+                        try:
+                            v = a.get()
+                        except Exception:
+                            continue
+                        if v is not None:
+                            return v
+                # All workers exhausted without success.
+                if all(a.ready() for a in asyncs):
+                    return None
+                time.sleep(0.05)
+            return None
+        finally:
+            try:
+                pool.terminate()
+                pool.join()
+            except Exception:
+                pass
+
+    @staticmethod
+    def er_sha256(t, e, r=20.0):
+        import hashlib
+        import time
+
+        def _lz_bits(digest):
+            n = 0
+            for b in digest:
+                if b == 0:
+                    n += 8
+                else:
+                    n += 8 - b.bit_length()
+                    break
+            return n
+
+        try:
+            e = int(e)
+        except (TypeError, ValueError):
+            return None
+        if e <= 0:
+            return '0'
+        start = time.time()
+        prefix = t + ':'
+        s = 0
+        while True:
+            for _ in range(4096):
+                h = hashlib.sha256((prefix + str(s)).encode()).digest()
+                if _lz_bits(h) >= e:
                     return str(s)
                 s += 1
             if time.time() - start > r:
