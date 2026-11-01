@@ -1,0 +1,7 @@
+version: "1"
+rules:
+  - base: master
+    upstream: Gujal00:master
+    # merge, not hardreset: hardreset would wipe local commits in this fork
+    mergeMethod: merge
+    mergeUnstable: false
