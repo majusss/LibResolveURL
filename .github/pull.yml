@@ -4,4 +4,6 @@ rules:
     upstream: Gujal00:master
     # merge, not hardreset: hardreset would wipe local commits in this fork
     mergeMethod: merge
-    mergeUnstable: false
+    # CI jest czerwone na 3.8 (brak binarki na ubuntu 26.04) — bez tego Pull
+    # czekałby na "clean" i nigdy nie zmergował
+    mergeUnstable: true
