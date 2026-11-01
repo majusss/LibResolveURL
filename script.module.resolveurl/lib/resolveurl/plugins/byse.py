@@ -24,89 +24,6 @@ from resolveurl.lib import helpers
 from resolveurl.resolver import ResolveUrl, ResolverError
 
 
-def _byse_re(t, e):
-    return ((t << e) | (t >> (32 - e))) & 0xFFFFFFFF
-
-
-def _byse_ye(e):
-    m = 0xFFFFFFFF
-    e[0] = (e[0] + e[1]) & m
-    e[3] = _byse_re(e[3] ^ e[0], 16)
-    e[2] = (e[2] + e[3]) & m
-    e[1] = _byse_re(e[1] ^ e[2], 12)
-    e[0] = (e[0] + e[1]) & m
-    e[3] = _byse_re(e[3] ^ e[0], 8)
-    e[2] = (e[2] + e[3]) & m
-    e[1] = _byse_re(e[1] ^ e[2], 7)
-
-
-def _byse_gr(t):
-    m = 0xFFFFFFFF
-    e = [1779033703, 3144134277, 1013904242, 2773480762]
-    be, lt, dr, lr, hr = 512, 511, 2, 2654435761, 2246822519
-    _re = _byse_re
-    _ye = _byse_ye
-    for i in t:
-        e[0] = (e[0] + i) & m
-        e[0] = _re(e[0], 7)
-        _ye(e)
-    for _ in range(8):
-        _ye(e)
-    r = [0] * be
-    for i in range(be):
-        _ye(e)
-        r[i] = (e[0] ^ e[2]) & m
-    for _ in range(dr):
-        for s in range(be):
-            a = r[s] & lt
-            c = (r[s] + r[a]) & m
-            c = _re(c, 13)
-            c = (c ^ ((r[(s + 1) & lt] * lr) & m)) & m
-            r[s] = c
-            e[0] = (e[0] ^ c) & m
-            _ye(e)
-    n = [0] * 8
-    o = be // 8
-    for i in range(8):
-        _ye(e)
-        s = e[0]
-        a = i * o
-        for c in range(o):
-            d = r[a + c]
-            s = (s + d) & m
-            s = _re(s, 5)
-            s = (s ^ ((d * hr) & m)) & m
-        n[i] = (s ^ e[2]) & m
-    return n
-
-
-def _byse_wr(t):
-    e = 0
-    for n in t:
-        if n == 0:
-            e += 32
-            continue
-        return e + (32 - n.bit_length())
-    return e
-
-
-def _byse_pow_worker(args):
-    nonce, difficulty, start, step = args
-    prefix = nonce + ':'
-    encode = str.encode
-    s = start
-    # Upper bound to avoid infinite loops if parent fails to terminate us.
-    # difficulty 12 needs ~4k hashes on average; 5M is far beyond any
-    # realistic need while keeping workers finite.
-    limit = start + step * 2000000
-    while s < limit:
-        d = _byse_gr(encode(prefix + str(s), 'ascii'))
-        if _byse_wr(d) >= difficulty:
-            return str(s)
-        s += step
-    return None
-
-
 class ByseResolver(ResolveUrl):
     name = 'Byse'
     domains = [
@@ -118,18 +35,23 @@ class ByseResolver(ResolveUrl):
         'bf0skv.org', 'z1ekv717.fun', 'l1afav.net', '222i8x.lol', '8mhlloqo.fun', 'f51rm.com',
         'xcoic.com', 'filemoon.nl', 'boosteradx.online', 'streamlyplayer.online', 'bysewihe.com',
         'byselapuix.com', 'embedplaybyse.top', 'sb1254w9megshle.org', 'streamlyplayero.online',
-        'moflix-stream.link', 'bysezoxexe.com', 'klcams.com'
+        'moflix-stream.link', 'bysezoxexe.com', 'klcams.com', 'mfw09.org', 'kinoger.re'
     ]
     pattern = (
-        r'(?://|\.)((?:filemoon|cinegrab|moonmov|kerapoxy|furher|1azayf9w|81u6xl9d|f16px|sb1254w9megshle|klcams|'
+        r'(?://|\.)((?:filemoon|cinegrab|moonmov|kerapoxy|furher|1azayf9w|81u6xl9d|f16px|sb1254w9megshle|klcams|mfw09|kinoger|'
         r'smdfs40r|bf0skv|z1ekv717|l1afav|222i8x|8mhlloqo|96ar|xcoic|f51rm|c1z39|boosteradx|streamlyplayero?|moflix-stream|'
         r'(?:embedplay)?byse(?:sayeveum|tayico|zejataos|koze|sukior|jikuar|fujedu|dikamoum|buho|wihe|lapuix|vepoin|zoxexe)?)'
-        r'\.(?:sx|top?|s?k?in|link|nl|wf|com|eu|art|pro|cc|xyz|org|fun|net|lol|online))'
-        r'/(?:(?:e|d|download)/)?([0-9a-zA-Z]+)'
+        r'\.(?:sx|top?|s?k?in|link|nl|wf|com|eu|art|pro|cc|xyz|org|fun|net|lol|online|re))'
+        r'/(?:(?:e|d|download)/)?([0-9a-zA-Z]+(?:\$\$.+)?)'
     )
-    UA = "Mozilla/5.0 (Linux; Android 10; TX6s) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36"
+    UA = 'Mozilla/5.0 (Linux; Android 6.0.1; SAMSUNG SM-G5510 Build/MMB29M) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/7.2 Chrome/59.0.3071.125 Mobile Safari/537.36'
 
     def get_media_url(self, host, media_id):
+        if '$$' in media_id:
+            media_id, referer = media_id.split('$$')
+            referer = urllib_parse.urljoin(referer, '/')
+        else:
+            referer = False
         web_url = self.get_url(host, media_id)
         ref = urllib_parse.urljoin(web_url, '/')
         headers = {
@@ -137,6 +59,13 @@ class ByseResolver(ResolveUrl):
             'Referer': ref,
             'Origin': ref[:-1]
         }
+        if referer:
+            # embed-restricted videos: the player sends the embedding page along with every API call
+            parent = urllib_parse.urlparse(referer).hostname or ''
+            headers.update({
+                'X-Embed-Origin': parent[4:] if parent.startswith('www.') else parent,
+                'X-Embed-Referer': referer
+            })
         embed = ''
         details_url = '{0}api/videos/{1}/details'.format(ref, media_id)
         try:
@@ -178,15 +107,13 @@ class ByseResolver(ResolveUrl):
 
             captcha_url = '{0}api/videos/{1}/{2}captcha'.format(ref, media_id, embed)
             captcha = self.net.http_POST(captcha_url, headers=headers, form_data={'fingerprint': fingerprint}, jdata=True, timeout=40).json
-            solution = self.er(captcha['pow_nonce'], captcha['pow_difficulty'], algorithm=captcha.get('algorithm'))
+            solution = self.er(captcha['pow_nonce'], captcha['pow_difficulty'])
             if solution is None:
                 raise ResolverError('Unable to solve captcha')
 
             verify_url = '{0}api/videos/{1}/{2}captcha/verify'.format(ref, media_id, embed)
             post_data = {'pow_token': captcha['pow_token'], 'solution': solution, 'fingerprint': fingerprint}
             verify = self.net.http_POST(verify_url, headers=headers, form_data=post_data, jdata=True, timeout=40).json
-            if not verify.get('token'):
-                raise ResolverError('Captcha verification failed: {0}'.format(verify.get('reason', 'pow_failed')))
             headers.update({'X-Captcha-Token': verify.get('token')})
 
             playback_url = '{0}api/videos/{1}/{2}playback'.format(ref, media_id, embed)
@@ -220,6 +147,10 @@ class ByseResolver(ResolveUrl):
                     headers.pop('X-Embed-Parent')
                 if 'X-Captcha-Token' in headers.keys():
                     headers.pop('X-Captcha-Token')
+                if 'X-Embed-Origin' in headers.keys():
+                    headers.pop('X-Embed-Origin')
+                if 'X-Embed-Referer' in headers.keys():
+                    headers.pop('X-Embed-Referer')
                 return uri + helpers.append_headers(headers)
 
         raise ResolverError('Video Link Not Found')
@@ -293,13 +224,13 @@ class ByseResolver(ResolveUrl):
                 'architecture': 'arm',
                 'bitness': '32',
                 'platform': 'Android',
-                'platform_version': '10.0.0',
-                'model': 'TX6s',
-                'ua_full_version': '137.0.7337.0',
+                'platform_version': '6.0.1',
+                'model': 'SM-G5510',
+                'ua_full_version': '59.0.3071.125',
                 'brand_full_versions': [
                     {
-                        'brand': 'Chromium',
-                        'version': '137.0.7337.0'
+                        'brand': 'SamsungBrowser',
+                        'version': '7.2'
                     }
                 ],
                 'pixel_ratio': 1,
@@ -313,18 +244,15 @@ class ByseResolver(ResolveUrl):
                 'hardware_concurrency': 4,
                 'device_memory': 2,
                 'touch_points': 1,
-                'webgl_vendor': 'Google Inc. (ARM)',
-                'webgl_renderer': 'ANGLE (ARM, Mali-G31 MP2, OpenGL ES 3.2)',
                 'canvas_hash': self.fh(r),
                 'audio_hash': self.fh(r + 1),
-                'webgl_params_hash': self.fh(r + 2),
                 'fonts_hash': self.fh(r + 3),
                 'codecs_hash': self.fh(r + 4),
                 'media_devices': 'ai1ao1vi4',
                 'pointer_type': 'coarse',
                 'extra': {
-                    'vendor': 'Google Inc.',
-                    'appVersion': self.UA.lstrip('Mozilla/')
+                    'vendor': 'Samsung',
+                    'appVersion': '7.2'
                 }
             },
             'storage': {},
@@ -393,111 +321,103 @@ class ByseResolver(ResolveUrl):
             return e + (32 - n.bit_length())
         return e
 
-    def er(self, t, e, r=45.0, algorithm=None):
+    @staticmethod
+    def qr(a, b, c, d, m):
+        a = (a + b) & m
+        x = d ^ a
+        d = ((x << 16) | (x >> 16)) & m
+        c = (c + d) & m
+        x = b ^ c
+        b = ((x << 12) | (x >> 20)) & m
+        a = (a + b) & m
+        x = d ^ a
+        d = ((x << 8) | (x >> 24)) & m
+        c = (c + d) & m
+        x = b ^ c
+        b = ((x << 7) | (x >> 25)) & m
+        return a, b, c, d
+
+    def er(self, t, e, r=45.0):
+        import struct
+        import sys
         import time
-        try:
-            e = int(e)
-        except (TypeError, ValueError):
-            return None
+        from array import array
+        from operator import itemgetter
         if e <= 0:
             return '0'
-        # NOTE: server currently sends algorithm="sha256-leading-zero-bits"
-        # but still requires the legacy custom PoW (verified: legacy solution
-        # is accepted, SHA256 is rejected). Keep er_sha256() for future use,
-        # but always solve with the legacy PoW for now.
-        _ = algorithm
-        # Parallel legacy solver first (uses all cores), fallback to single.
-        sol = self._er_mp(t, e, r)
-        if sol is not None:
-            return sol
-        return self._er_single(t, e, r)
+        if e > 32 or sys.byteorder != 'little' or not hasattr(int, 'from_bytes'):
+            return self.es(t, e, r)
+        # Same result as es() (the smallest s), but 64 attempts at a time: each attempt has its own
+        # 64 bit field in one big integer, so every addition, xor, shift and multiplication below
+        # works on all of them in one step. Only the lookup r[r[s] & 511] differs per field, it goes
+        # through a flat array. With e <= 32 only the first output word decides.
+        k, m = 64, 0xFFFFFFFF
+        ones = sum(1 << (64 * j) for j in range(k))
+        mm, im, nb = ones * m, ones * 511, 8 * k
+        jo = sum(j << (64 * j) for j in range(k))
+        hi = ((m << (32 - e)) & m) * ones
+        q = struct.Struct('<%dQ' % k)
+        a, b, c, d = 1779033703, 3144134277, 1013904242, 2773480762
+        for i in bytearray((t + ':').encode('ascii')):
+            a = self.re((a + i) & m, 7)
+            a, b, c, d = self.qr(a, b, c, d, m)
+        st = (a * ones, b * ones, c * ones, d * ones)
+        start = time.time()
+        s, n, nx = 0, 1, 10
+        while True:
+            cnt = min(k, nx - s)
+            ds = [str(v) for v in range(s, s + cnt)]
+            ds += [ds[-1]] * (k - cnt)
+            a, b, c, d = st
+            for p in range(n):
+                a = (a + int.from_bytes(q.pack(*[ord(x[p]) for x in ds]), 'little')) & mm
+                a = ((a << 7) | (a >> 25)) & mm
+                a, b, c, d = self.qr(a, b, c, d, mm)
+            for _ in range(8):
+                a, b, c, d = self.qr(a, b, c, d, mm)
+            rr = [0] * 512
+            for i in range(512):
+                a, b, c, d = self.qr(a, b, c, d, mm)
+                rr[i] = a ^ c
+            fl = array('Q')
+            fl.frombytes(b''.join([v.to_bytes(nb, 'little') for v in rr]))
+            fv = memoryview(fl)
+            for _ in range(2):
+                for i in range(512):
+                    x = rr[i]
+                    y = itemgetter(*q.unpack(((x & im) * k + jo).to_bytes(nb, 'little')))(fl)
+                    y = (x + int.from_bytes(q.pack(*y), 'little')) & mm
+                    y = ((y << 13) | (y >> 19)) & mm
+                    y ^= (rr[(i + 1) & 511] * 2654435761) & mm
+                    rr[i] = y
+                    fv[i * k:i * k + k] = memoryview(y.to_bytes(nb, 'little')).cast('Q')
+                    a, b, c, d = self.qr(a ^ y, b, c, d, mm)
+            a, b, c, d = self.qr(a, b, c, d, mm)
+            x = a
+            for v in rr[:64]:
+                x = (x + v) & mm
+                x = ((x << 5) | (x >> 27)) & mm
+                x ^= (v * 2246822519) & mm
+            x = q.unpack(((x ^ c) & hi).to_bytes(nb, 'little'))
+            for j in range(cnt):
+                if not x[j]:
+                    return str(s + j)
+            s += cnt
+            if s == nx:
+                n, nx = n + 1, nx * 10
+            if time.time() - start > r:
+                return None
 
-    def _er_single(self, t, e, r=45.0):
+    def es(self, t, e, r):
+        # one attempt at a time, the reference for er()
         import time
         start = time.time()
         s = 0
         t += ':'
         while True:
             for _ in range(1024):
-                d = _byse_gr((t + str(s)).encode('ascii'))
-                if _byse_wr(d) >= e:
-                    return str(s)
-                s += 1
-            if time.time() - start > r:
-                return None
-
-    def _er_mp(self, t, e, r=45.0):
-        import time
-        try:
-            import multiprocessing as mp
-            import os
-        except ImportError:
-            return None
-        try:
-            cpu = os.cpu_count() or 4
-        except NotImplementedError:
-            cpu = 4
-        workers = max(2, min(8, cpu))
-        # Tiny difficulties solve in ms single-threaded; skip MP startup cost.
-        if e < 10:
-            return None
-        try:
-            pool = mp.Pool(workers)
-        except Exception:
-            return None
-        try:
-            tasks = [(t, e, i, workers) for i in range(workers)]
-            asyncs = [pool.apply_async(_byse_pow_worker, (task,)) for task in tasks]
-            start = time.time()
-            while time.time() - start < r:
-                for a in asyncs:
-                    if a.ready():
-                        try:
-                            v = a.get()
-                        except Exception:
-                            continue
-                        if v is not None:
-                            return v
-                # All workers exhausted without success.
-                if all(a.ready() for a in asyncs):
-                    return None
-                time.sleep(0.05)
-            return None
-        finally:
-            try:
-                pool.terminate()
-                pool.join()
-            except Exception:
-                pass
-
-    @staticmethod
-    def er_sha256(t, e, r=20.0):
-        import hashlib
-        import time
-
-        def _lz_bits(digest):
-            n = 0
-            for b in digest:
-                if b == 0:
-                    n += 8
-                else:
-                    n += 8 - b.bit_length()
-                    break
-            return n
-
-        try:
-            e = int(e)
-        except (TypeError, ValueError):
-            return None
-        if e <= 0:
-            return '0'
-        start = time.time()
-        prefix = t + ':'
-        s = 0
-        while True:
-            for _ in range(4096):
-                h = hashlib.sha256((prefix + str(s)).encode()).digest()
-                if _lz_bits(h) >= e:
+                d = self.gr((t + str(s)).encode('ascii'))
+                if self.wr(d) >= e:
                     return str(s)
                 s += 1
             if time.time() - start > r:
